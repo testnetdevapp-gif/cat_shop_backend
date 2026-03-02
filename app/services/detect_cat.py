@@ -1,14 +1,14 @@
 # app/services/detect_cat.py
-# Gemini 2.0 Flash Lite — ตรวจจับแมว (ประตูกรองก่อนส่ง analysis)
-# ใช้ gemini-2.0-flash-lite เพราะ RPD สูง (14,400/วัน) ไม่กิน quota gemini-2.5-flash
+# Gemini 2.0 Flash Lite — ตรวจจับแมว
+# รับ base64 จาก Flutter โดยตรง ไม่ต้อง download จาก URL
 
 import os
 import re
 import json
 import uuid
 import time
+import base64
 import logging
-import requests
 
 from google import genai
 from google.genai import types
@@ -19,11 +19,11 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# ── Client (ใช้ key เดิมกับ analysis_cat.py) ─────────────────────────────────
+# ── Client ────────────────────────────────────────────────────────────────────
 client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-MODEL  = "models/gemini-2.0-flash-lite"   # ← 14,400 RPD free tier
+MODEL  = "models/gemini-2.0-flash-lite"   # 14,400 RPD free tier
 
-# ── Safety Settings (เหมือน analysis_cat.py) ─────────────────────────────────
+# ── Safety Settings ───────────────────────────────────────────────────────────
 SAFETY_SETTINGS = [
     types.SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold=HarmBlockThreshold.BLOCK_NONE),
     types.SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold=HarmBlockThreshold.BLOCK_NONE),
@@ -31,7 +31,7 @@ SAFETY_SETTINGS = [
     types.SafetySetting(category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=HarmBlockThreshold.BLOCK_NONE),
 ]
 
-# ── Prompt (สั้น เน้น detect เพียงอย่างเดียว ประหยัด token) ─────────────────
+# ── Prompt ────────────────────────────────────────────────────────────────────
 DETECT_PROMPT = """
 You are a cat image validator. Analyze the image carefully and respond ONLY with raw JSON.
 No markdown. No explanation. No extra text.
@@ -61,18 +61,16 @@ Rules:
 """
 
 
-# ── JSON Parser (reuse pattern จาก analysis_cat.py) ──────────────────────────
+# ── JSON Parser ───────────────────────────────────────────────────────────────
 
 def _parse_json_robust(raw_text: str) -> dict:
     text = raw_text.strip()
 
-    # Step 1: direct parse
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Step 2: strip markdown fence
     cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", text)
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
     try:
@@ -80,7 +78,6 @@ def _parse_json_robust(raw_text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Step 3: brace-depth extraction
     start = cleaned.find('{')
     if start != -1:
         depth, end = 0, -1
@@ -111,7 +108,6 @@ def _parse_json_robust(raw_text: str) -> dict:
             except json.JSONDecodeError:
                 pass
 
-    # Step 4: fallback — is_cat false
     if '"is_cat": false' in text or '"is_cat":false' in text:
         return {
             "is_cat": False,
@@ -124,11 +120,11 @@ def _parse_json_robust(raw_text: str) -> dict:
     raise RuntimeError(f"Cannot parse Gemini detect response. Preview: {text[:200]}")
 
 
-# ── Gemini Caller with Retry ──────────────────────────────────────────────────
+# ── Gemini Caller ─────────────────────────────────────────────────────────────
 
 def _call_gemini_detect(image_bytes: bytes, mime_type: str) -> str:
     request_id  = str(uuid.uuid4())[:8]
-    max_retries = 2          # detect ไม่ต้อง retry เยอะ เน้นเร็ว
+    max_retries = 2
     base_wait   = 2
 
     for attempt in range(max_retries):
@@ -143,8 +139,8 @@ def _call_gemini_detect(image_bytes: bytes, mime_type: str) -> str:
                     types.Part.from_text(text=DETECT_PROMPT),
                 ],
                 config=types.GenerateContentConfig(
-                    temperature=0.0,          # ต้องการ deterministic
-                    max_output_tokens=150,    # schema เล็ก ไม่ต้องการมาก
+                    temperature=0.0,
+                    max_output_tokens=150,
                     safety_settings=SAFETY_SETTINGS,
                     response_mime_type="application/json",
                 ),
@@ -169,7 +165,6 @@ def _call_gemini_detect(image_bytes: bytes, mime_type: str) -> str:
             latency   = round(time.time() - start, 2)
             print(f"[detect/{request_id}] ❌ Attempt {attempt + 1} failed ({latency}s): {error_str}")
 
-            # Quota หมด → หยุดทันที
             if "limit: 0" in error_str or "PerDay" in error_str:
                 raise RuntimeError("detect quota หมดแล้ว กรุณาลองใหม่พรุ่งนี้")
 
@@ -188,24 +183,65 @@ def _call_gemini_detect(image_bytes: bytes, mime_type: str) -> str:
     raise RuntimeError(f"Gemini detect failed after {max_retries} retries [{request_id}]")
 
 
-# ── Main Entry Point ──────────────────────────────────────────────────────────
+# ── Helper: build result dict ─────────────────────────────────────────────────
+
+def _build_result(raw_text: str) -> dict:
+    try:
+        result = _parse_json_robust(raw_text)
+    except RuntimeError as e:
+        logger.error(f"detect parse error: {e}")
+        # fallback: ให้ผ่านไป analysis ตัดสินเอง
+        return {
+            "is_cat": True, "is_single": True, "is_real_photo": True,
+            "reason": "other", "confidence": 0.5, "passed": True,
+        }
+
+    is_cat    = bool(result.get("is_cat", False))
+    is_single = bool(result.get("is_single", True))
+    is_real   = bool(result.get("is_real_photo", True))
+    reason    = result.get("reason", "other")
+    confidence = float(result.get("confidence", 0.0))
+    passed    = is_cat and is_single and is_real
+
+    print(
+        f"🔍 detect result: passed={passed} | reason={reason} "
+        f"| cat={is_cat} single={is_single} real={is_real} | conf={confidence:.2f}"
+    )
+
+    return {
+        "is_cat":        is_cat,
+        "is_single":     is_single,
+        "is_real_photo": is_real,
+        "reason":        reason,
+        "confidence":    confidence,
+        "passed":        passed,
+    }
+
+
+# ── Main Entry Points ─────────────────────────────────────────────────────────
+
+def detect_cat_base64(image_base64: str, mime_type: str = "image/jpeg") -> dict:
+    """
+    ✅ รับ base64 จาก Flutter โดยตรง — ไม่ต้อง download จาก URL
+    """
+    print(f"🔍 detect_cat_base64: mime={mime_type} | size={len(image_base64)} chars")
+
+    try:
+        image_bytes = base64.b64decode(image_base64)
+    except Exception as e:
+        raise RuntimeError(f"Cannot decode base64 image: {e}")
+
+    print(f"✅ Decoded ({len(image_bytes)/1024:.1f} KB)")
+    raw_text = _call_gemini_detect(image_bytes, mime_type)
+    return _build_result(raw_text)
+
 
 def detect_cat(image_url: str) -> dict:
     """
-    ตรวจจับแมวจาก URL
-    Returns:
-        {
-            "is_cat": bool,
-            "is_single": bool,
-            "is_real_photo": bool,
-            "reason": str,        # "passed" | "no_cat" | "multiple_cats" | "is_dog" | "non_cat_animal" | "cartoon" | "other"
-            "confidence": float,
-            "passed": bool        # True เฉพาะเมื่อ is_cat AND is_single AND is_real_photo
-        }
+    Legacy: รับ URL (ยังคงไว้เผื่อใช้ที่อื่น)
     """
+    import requests
     print(f"🔍 detect_cat: downloading {image_url}")
-
-    # 1. Download image
     try:
         resp = requests.get(image_url, timeout=10)
         resp.raise_for_status()
@@ -216,42 +252,5 @@ def detect_cat(image_url: str) -> dict:
     mime_type   = resp.headers.get("Content-Type", "image/jpeg").split(";")[0]
     print(f"✅ Downloaded ({len(image_bytes)/1024:.1f} KB) | mime={mime_type}")
 
-    # 2. Call Gemini Lite
     raw_text = _call_gemini_detect(image_bytes, mime_type)
-
-    # 3. Parse JSON
-    try:
-        result = _parse_json_robust(raw_text)
-    except RuntimeError as e:
-        logger.error(f"detect_cat parse error: {e}")
-        # fallback: ให้ผ่านไปแล้วให้ analysis_cat ตัดสิน
-        return {
-            "is_cat": True,
-            "is_single": True,
-            "is_real_photo": True,
-            "reason": "other",
-            "confidence": 0.5,
-            "passed": True,
-        }
-
-    is_cat       = bool(result.get("is_cat", False))
-    is_single    = bool(result.get("is_single", True))
-    is_real      = bool(result.get("is_real_photo", True))
-    reason       = result.get("reason", "other")
-    confidence   = float(result.get("confidence", 0.0))
-
-    passed = is_cat and is_single and is_real
-
-    print(
-        f"🔍 detect result: passed={passed} | reason={reason} "
-        f"| cat={is_cat} single={is_single} real={is_real} | conf={confidence:.2f}"
-    )
-
-    return {
-        "is_cat":       is_cat,
-        "is_single":    is_single,
-        "is_real_photo": is_real,
-        "reason":       reason,
-        "confidence":   confidence,
-        "passed":       passed,
-    }
+    return _build_result(raw_text)

@@ -1,12 +1,11 @@
-
-# POST /api/vision/detect-cat
-# รับ image_url จาก Flutter → ตรวจด้วย Gemini Lite → คืนผล detect
+# app/api/detect_api.py
+# POST /api/detect/cat — รับ base64 จาก Flutter ตรงๆ ไม่ต้องใช้ Firebase Storage
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 
 from app.auth.dependencies import verify_firebase_token
-from app.services.detect_cat import detect_cat as _detect_cat
+from app.services.detect_cat import detect_cat_base64 as _detect_cat
 
 router = APIRouter()
 
@@ -14,20 +13,21 @@ router = APIRouter()
 # ── Request / Response ────────────────────────────────────────────────────────
 
 class DetectCatRequest(BaseModel):
-    image_url: str   # URL ของรูปที่อัปโหลดไว้แล้ว (Firebase Storage / CDN)
+    image_base64: str        # base64 encoded image
+    mime_type: str = "image/jpeg"
 
 
 class DetectCatResponse(BaseModel):
-    passed:        bool    # True = ผ่าน → ส่งต่อได้เลย
+    passed:        bool
     is_cat:        bool
     is_single:     bool
     is_real_photo: bool
-    reason:        str     # "passed" | "no_cat" | "multiple_cats" | "is_dog" | "non_cat_animal" | "cartoon" | "other"
+    reason:        str
     confidence:    float
-    message:       str     # ข้อความแสดงผลสำหรับ Flutter
+    message:       str
 
 
-# ── Reason → Thai message map ─────────────────────────────────────────────────
+# ── Reason → Thai message ─────────────────────────────────────────────────────
 _REASON_MESSAGE = {
     "passed":         "✅ พบแมว! กดวิเคราะห์ได้เลย",
     "no_cat":         "😿 ไม่พบแมวในภาพ ลองถ่ายใหม่ให้เห็นแมวชัดเจนทั้งตัว",
@@ -53,10 +53,13 @@ async def detect_cat_endpoint(
             detail="Invalid Firebase token",
         )
 
-    print(f"\n🔍 detect-cat | user={firebase_uid[:8]}*** | url={request.image_url}")
+    print(f"\n🔍 detect/cat | user={firebase_uid[:8]}*** | mime={request.mime_type} | size={len(request.image_base64)} chars")
 
     try:
-        result = _detect_cat(image_url=request.image_url)
+        result = _detect_cat(
+            image_base64=request.image_base64,
+            mime_type=request.mime_type,
+        )
 
         reason  = result.get("reason", "other")
         message = _REASON_MESSAGE.get(reason, _REASON_MESSAGE["other"])
@@ -73,7 +76,6 @@ async def detect_cat_endpoint(
 
     except RuntimeError as e:
         error_msg = str(e)
-        # Quota หมด → 429
         if "quota" in error_msg.lower():
             raise HTTPException(status_code=429, detail=error_msg)
         raise HTTPException(status_code=500, detail=f"Detect failed: {error_msg}")
