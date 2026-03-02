@@ -23,10 +23,14 @@ client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
 
 # fallback order — แต่ละตัว quota แยกกัน
 # ❌ ไม่ใส่ gemini-2.5-flash เพราะใช้ใน analysis แล้ว
+# DETECT_MODEL = [
+#     "models/gemini-2.5-flash-lite",  # ถูก เร็ว quota แยก
+#     "models/gemini-2.0-flash",       # fallback
+#     "models/gemini-2.0-flash-lite",  # fallback สุดท้าย
+# ]
 DETECT_MODELS = [
-    "models/gemini-2.5-flash-lite",  # ถูก เร็ว quota แยก
-    "models/gemini-2.0-flash",       # fallback
-    "models/gemini-2.0-flash-lite",  # fallback สุดท้าย
+    "models/gemini-2.0-flash",       # primary (2.5-flash-lite quota หมด)
+    "models/gemini-2.0-flash-lite",  # fallback
 ]
 
 # ── Safety Settings ───────────────────────────────────────────────────────────

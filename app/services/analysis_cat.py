@@ -332,7 +332,8 @@ def _call_gemini_with_retry(image_bytes: bytes, mime_type: str) -> str:
                 ],
                 config=types.GenerateContentConfig(
                     temperature=0.1,
-                    max_output_tokens=1000,   # ลดให้พอดี = ลดโอกาส truncate
+                    max_output_tokens=4000,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),   # ลดให้พอดี = ลดโอกาส truncate
                     safety_settings=SAFETY_SETTINGS,
                     response_mime_type="application/json",
                 ),
