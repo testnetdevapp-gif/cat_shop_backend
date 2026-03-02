@@ -29,7 +29,7 @@ client = genai.Client(api_key=os.environ["GOOGLE_API_KEY_DETECT"])
 #     "models/gemini-2.0-flash-lite",  # fallback สุดท้าย
 # ]
 
-DETECT_MODELS = "models/gemini-2.5-flash"
+DETECT_MODELS = ["models/gemini-2.5-flash"]
 
 # ── Safety Settings ───────────────────────────────────────────────────────────
 SAFETY_SETTINGS = [
