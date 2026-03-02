@@ -25,7 +25,10 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 
 from app.auth.dependencies import verify_firebase_token
+from app.services.detect_cat import detect_cat
 from app.services.analysis_cat import analyze_cat
+
+
 from app.db.database import get_db_pool
 
 router = APIRouter()

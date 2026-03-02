@@ -13,7 +13,7 @@ from app.db.database import create_db_pool, close_db_pool
 from app.core.firebase import init_firebase
 from app.api.api_favourite import router as api_favourite
 from app.api.api_basket import router as api_basket
-
+from app.api.detect_api import router as detect_router
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +64,7 @@ app.include_router(search_router,   prefix="/api", tags=["Search"])
 app.include_router(login_router,    prefix="/api", tags=["LogIn"])
 app.include_router(sign_up_router,  prefix="/api", tags=["SignUp"])
 app.include_router(vision_router,   prefix="/api", tags=["Vision"])
+app.include_router(detect_router,   prefix="/api", tags=["Detect"])
 app.include_router(api_favourite,   prefix="/api", tags=["Favourites"])
 app.include_router(api_basket,      prefix="/api", tags=["Baskets"])
 app.include_router(cat_crud_router, prefix="/api", tags=["Cat CRUD"])
