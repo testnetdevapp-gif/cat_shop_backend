@@ -19,17 +19,15 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ── Client ────────────────────────────────────────────────────────────────────
-client = genai.Client(api_key=os.environ["GOOGLE_API_KEY_DETECT"])
+client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
 
 # fallback order — แต่ละตัว quota แยกกัน
 # ❌ ไม่ใส่ gemini-2.5-flash เพราะใช้ใน analysis แล้ว
-# DETECT_MODELS = [
-#     "models/gemini-2.5-flash-lite",  # ถูก เร็ว quota แยก
-#     "models/gemini-2.0-flash",       # fallback
-#     "models/gemini-2.0-flash-lite",  # fallback สุดท้าย
-# ]
-
-DETECT_MODELS = ["models/gemini-2.5-flash"]
+DETECT_MODELS = [
+    "models/gemini-2.5-flash-lite",  # ถูก เร็ว quota แยก
+    "models/gemini-2.0-flash",       # fallback
+    "models/gemini-2.0-flash-lite",  # fallback สุดท้าย
+]
 
 # ── Safety Settings ───────────────────────────────────────────────────────────
 SAFETY_SETTINGS = [
