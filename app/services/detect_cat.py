@@ -1,6 +1,5 @@
 # app/services/detect_cat.py
-# Gemini 2.0 Flash Lite — ตรวจจับแมว
-# รับ base64 จาก Flutter โดยตรง ไม่ต้อง download จาก URL
+# รับ base64 จาก Flutter — auto fallback ถ้า model quota หมด
 
 import os
 import re
@@ -21,7 +20,14 @@ logger = logging.getLogger(__name__)
 
 # ── Client ────────────────────────────────────────────────────────────────────
 client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-MODEL  = "models/gemini-2.0-flash-lite"   # 14,400 RPD free tier
+
+# fallback order — แต่ละตัว quota แยกกัน
+# ❌ ไม่ใส่ gemini-2.5-flash เพราะใช้ใน analysis แล้ว
+DETECT_MODELS = [
+    "models/gemini-2.5-flash-lite",  # ถูก เร็ว quota แยก
+    "models/gemini-2.0-flash",       # fallback
+    "models/gemini-2.0-flash-lite",  # fallback สุดท้าย
+]
 
 # ── Safety Settings ───────────────────────────────────────────────────────────
 SAFETY_SETTINGS = [
@@ -120,20 +126,28 @@ def _parse_json_robust(raw_text: str) -> dict:
     raise RuntimeError(f"Cannot parse Gemini detect response. Preview: {text[:200]}")
 
 
-# ── Gemini Caller ─────────────────────────────────────────────────────────────
+# ── Quota error check ─────────────────────────────────────────────────────────
+
+def _is_quota_error(error_str: str) -> bool:
+    return (
+        "limit: 0" in error_str
+        or "PerDay" in error_str
+        or "RESOURCE_EXHAUSTED" in error_str
+        or "resource_exhausted" in error_str.lower()
+        or ("429" in error_str and "quota" in error_str.lower())
+    )
+
+
+# ── Gemini Caller (auto fallback to next model on quota error) ────────────────
 
 def _call_gemini_detect(image_bytes: bytes, mime_type: str) -> str:
-    request_id  = str(uuid.uuid4())[:8]
-    max_retries = 2
-    base_wait   = 2
+    request_id = str(uuid.uuid4())[:8]
 
-    for attempt in range(max_retries):
-        start = time.time()
+    for model in DETECT_MODELS:
+        print(f"[detect/{request_id}] 🔍 Trying: {model}")
         try:
-            print(f"[detect/{request_id}] 🔍 Attempt {attempt + 1}/{max_retries}")
-
             response = client.models.generate_content(
-                model=MODEL,
+                model=model,
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
                     types.Part.from_text(text=DETECT_PROMPT),
@@ -152,35 +166,26 @@ def _call_gemini_detect(image_bytes: bytes, mime_type: str) -> str:
             else:
                 raw_text = response.candidates[0].content.parts[0].text.strip()
 
-            latency = round(time.time() - start, 2)
-
             if not raw_text:
                 raise RuntimeError("Empty response from Gemini detect")
 
-            print(f"[detect/{request_id}] ✅ OK | {len(raw_text)} chars | {latency}s")
+            print(f"[detect/{request_id}] ✅ OK | model={model} | {len(raw_text)} chars")
             return raw_text
 
         except Exception as e:
             error_str = str(e)
-            latency   = round(time.time() - start, 2)
-            print(f"[detect/{request_id}] ❌ Attempt {attempt + 1} failed ({latency}s): {error_str}")
+            print(f"[detect/{request_id}] ❌ {model} failed: {error_str[:150]}")
 
-            if "limit: 0" in error_str or "PerDay" in error_str:
-                raise RuntimeError("detect quota หมดแล้ว กรุณาลองใหม่พรุ่งนี้")
-
-            transient = any(kw in error_str.lower() for kw in [
-                "429", "resource_exhausted", "deadline", "timeout", "unavailable",
-            ])
-
-            if transient and attempt < max_retries - 1:
-                wait = base_wait * (attempt + 1)
-                print(f"[detect/{request_id}] ⏳ Retrying in {wait}s...")
-                time.sleep(wait)
+            if _is_quota_error(error_str):
+                # quota หมด → ลอง model ถัดไปทันที
+                print(f"[detect/{request_id}] ⚠️ Quota exhausted → trying next model...")
                 continue
 
+            # error อื่น (network, auth, etc.) → raise ทันที
             raise RuntimeError(f"Gemini detect failed [{request_id}]: {error_str}")
 
-    raise RuntimeError(f"Gemini detect failed after {max_retries} retries [{request_id}]")
+    # ทุก model quota หมด
+    raise RuntimeError("detect quota หมดทุก model กรุณาลองใหม่พรุ่งนี้")
 
 
 # ── Helper: build result dict ─────────────────────────────────────────────────
@@ -190,18 +195,17 @@ def _build_result(raw_text: str) -> dict:
         result = _parse_json_robust(raw_text)
     except RuntimeError as e:
         logger.error(f"detect parse error: {e}")
-        # fallback: ให้ผ่านไป analysis ตัดสินเอง
         return {
             "is_cat": True, "is_single": True, "is_real_photo": True,
             "reason": "other", "confidence": 0.5, "passed": True,
         }
 
-    is_cat    = bool(result.get("is_cat", False))
-    is_single = bool(result.get("is_single", True))
-    is_real   = bool(result.get("is_real_photo", True))
-    reason    = result.get("reason", "other")
+    is_cat     = bool(result.get("is_cat", False))
+    is_single  = bool(result.get("is_single", True))
+    is_real    = bool(result.get("is_real_photo", True))
+    reason     = result.get("reason", "other")
     confidence = float(result.get("confidence", 0.0))
-    passed    = is_cat and is_single and is_real
+    passed     = is_cat and is_single and is_real
 
     print(
         f"🔍 detect result: passed={passed} | reason={reason} "
@@ -221,9 +225,7 @@ def _build_result(raw_text: str) -> dict:
 # ── Main Entry Points ─────────────────────────────────────────────────────────
 
 def detect_cat_base64(image_base64: str, mime_type: str = "image/jpeg") -> dict:
-    """
-    ✅ รับ base64 จาก Flutter โดยตรง — ไม่ต้อง download จาก URL
-    """
+    """รับ base64 จาก Flutter โดยตรง"""
     print(f"🔍 detect_cat_base64: mime={mime_type} | size={len(image_base64)} chars")
 
     try:
@@ -237,9 +239,7 @@ def detect_cat_base64(image_base64: str, mime_type: str = "image/jpeg") -> dict:
 
 
 def detect_cat(image_url: str) -> dict:
-    """
-    Legacy: รับ URL (ยังคงไว้เผื่อใช้ที่อื่น)
-    """
+    """Legacy: รับ URL"""
     import requests
     print(f"🔍 detect_cat: downloading {image_url}")
     try:
