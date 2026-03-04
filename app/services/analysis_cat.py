@@ -43,7 +43,7 @@ If a cat is detected, return this exact schema (all fields required):
 {
   "is_cat": true,
   "cat_color": "describe main color(s) e.g. orange, black and white, grey tabby",
-  "breed": "string or null",
+  "breed": "always provide best guess — NEVER null (e.g. Domestic Shorthair, Persian, Siamese, Scottish Fold, British Shorthair, Bengal, Mixed Breed)",
   "age": 3,
   "gender": 0,
 
@@ -85,6 +85,11 @@ gender: 0=unknown/female, 1=male
 
 weight (kg, float): estimate from body volume vs typical domestic cat.
 
+breed (string, NEVER null):
+  Always provide best guess from visual features (face shape, coat, body type).
+  If uncertain, use "Domestic Shorthair" or "Mixed Breed" as fallback.
+  Never return null.
+
 size_recommendation and size_ranges (derive from chest_cm):
   XS: chest < 28    neck_min=16 neck_max=20 back_min=28 back_max=34
   S : 28<=chest<32  neck_min=18 neck_max=22 back_min=32 back_max=38
@@ -113,7 +118,7 @@ class SizeRanges(BaseModel):
 class CatAnalysisSchema(BaseModel):
     is_cat: bool
     cat_color: str
-    breed: Optional[str] = None
+    breed: str = "Domestic Shorthair"
     age: int = 0
     gender: int = 0
     weight: float
