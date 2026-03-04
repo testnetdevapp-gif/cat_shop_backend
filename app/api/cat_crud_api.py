@@ -483,7 +483,7 @@ async def analyze_and_save_cat(
                 analysis.get("cat_color", "Unknown"),
                 analysis.get("breed"),
                 analysis.get("age_category", "adult"),
-                _f(analysis.get("weight_kg")),
+                _f(analysis.get("weight")),
                 analysis.get("size_category", "M"),
                 _f(m.get("chest_cm")),
                 _f(m.get("neck_cm")),
@@ -511,7 +511,7 @@ async def analyze_and_save_cat(
 
         result = _row(row)
         result["analysis_summary"] = {
-            "weight_kg":      analysis.get("weight_kg"),
+            "weight":      analysis.get("weight"),
             "size_category":  analysis.get("size_category"),
             "body_condition": analysis.get("body_condition"),
             "confidence":     analysis.get("confidence"),

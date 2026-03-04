@@ -149,7 +149,7 @@ async def analyze_cat_endpoint(
                 analysis.get("age", 0),                         # $4  int4 — analysis_cat.py รับประกัน int แล้ว
                 analysis.get("gender", 0),                      # $5  int4
                 # ── $6–$7 ───────────────────────────────────────────────────
-                _f(analysis.get("weight_kg")),                  # $6  numeric
+                _f(analysis.get("weight")),                  # $6  numeric
                 analysis.get("size_category", "M"),             # $7  varchar
                 # ── $8–$13 measurements ─────────────────────────────────────
                 # ✅ อ่านจาก nested dict  analysis["measurements"]
@@ -190,7 +190,7 @@ async def analyze_cat_endpoint(
         # ── STEP 3: Query cat_clothing ที่ match ──────────────────────────────
         print("\n--- STEP 3: Fetching Recommendations ---")
         size        = analysis.get("size_category", "M")
-        weight_val  = _f(analysis.get("weight_kg")) or 0.0
+        weight_val  = _f(analysis.get("weight")) or 0.0
         chest_val   = _f(m.get("chest_cm")) or 0.0
 
         async with pool.acquire() as conn:
@@ -251,7 +251,7 @@ async def analyze_cat_endpoint(
             "name":           analysis.get("cat_color", "Unknown"),
             "breed":          analysis.get("breed"),
             "age":            analysis.get("age", 0),
-            "weight":         _f(analysis.get("weight_kg")) or 0.0,
+            "weight":         _f(analysis.get("weight")) or 0.0,
             "size_category":  size,
             "chest_cm":       chest_val,
             "neck_cm":        _f(m.get("neck_cm")),
