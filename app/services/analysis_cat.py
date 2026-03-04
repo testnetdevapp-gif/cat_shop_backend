@@ -161,9 +161,7 @@ class CatAnalysisSchema(BaseModel):
 
     @classmethod
     def from_ai(cls, data: dict) -> "CatAnalysisSchema":
-        # handle ถ้า Gemini ดันส่ง weight_kg มา
-        if "weight_kg" in data and "weight" not in data:
-            data["weight"] = data.pop("weight_kg")
+       
         return cls(**data)
 
 
