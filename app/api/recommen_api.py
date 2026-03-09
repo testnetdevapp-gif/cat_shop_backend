@@ -35,6 +35,23 @@ def _serialize(d: dict) -> dict:
     return result
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    """float() ที่ไม่ crash เมื่อ value เป็น None"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _calc_size(chest: float) -> str:
+    """คำนวณ size จาก chest_cm (fallback เมื่อ size_category เป็น None)"""
+    if chest < 28:  return "XS"
+    if chest < 32:  return "S"
+    if chest < 36:  return "M"
+    if chest < 40:  return "L"
+    return "XL"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. LIST — recommendations ของ user พร้อม pagination
 #    GET /system/recommend/
@@ -66,8 +83,13 @@ async def get_recommendations(
                 id, cat_color, breed, age, gender,
                 weight, size_category,
                 chest_cm, neck_cm, body_length_cm,
+                confidence, bounding_box, thumbnail_url,
                 age_category, body_condition, body_condition_score,
-                image_cat, detected_at
+                body_condition_description,
+                bmi, waist_cm, back_length_cm, leg_length_cm,
+                posture, size_recommendation, size_ranges,
+                quality_flag, analysis_version, analysis_method,
+                image_cat, detected_at, updated_at
             FROM cat
             WHERE firebase_uid = $1
             ORDER BY detected_at DESC
@@ -91,9 +113,12 @@ async def get_recommendations(
                 "message": "ยังไม่มีข้อมูลแมว กรุณาวิเคราะห์แมวก่อน",
             }
 
-        size       = cat["size_category"]
-        weight_val = float(cat["weight"])
-        chest_val  = float(cat["chest_cm"])
+        # ✅ FIX: ใช้ _safe_float แทน float() ตรงๆ ป้องกัน None crash
+        weight_val = _safe_float(cat["weight"], default=4.0)
+        chest_val  = _safe_float(cat["chest_cm"], default=32.0)
+
+        # ✅ FIX: size_category อาจเป็น None → คำนวณจาก chest แทน
+        size = cat["size_category"] or _calc_size(chest_val)
 
         # ── count สำหรับ pagination ──────────────────────────────────────────
         total: int = await conn.fetchval(
@@ -222,7 +247,7 @@ async def get_recommendation_detail(
             firebase_uid,
         )
 
-        # ── clothing full detail (เหมือน home-advertisement) ────────────────
+        # ── clothing full detail ─────────────────────────────────────────────
         clothing = await conn.fetchrow(
             """
             SELECT
@@ -272,9 +297,10 @@ async def get_recommendation_detail(
 
     # ── คำนวณ match กับ cat (ถ้ามี) ─────────────────────────────────────────
     if cat:
-        c_weight = float(cat["weight"])
-        c_chest  = float(cat["chest_cm"])
-        c_size   = cat["size_category"]
+        # ✅ FIX: ใช้ _safe_float ทั้ง weight และ chest_cm
+        c_weight = _safe_float(cat["weight"], default=4.0)
+        c_chest  = _safe_float(cat["chest_cm"], default=32.0)
+        c_size   = cat["size_category"] or _calc_size(c_chest)
         cl       = dict(clothing)
 
         match_size   = c_size == cl["size_category"]
@@ -295,7 +321,6 @@ async def get_recommendation_detail(
             3,
         )
 
-        # สร้าง reason string
         parts = []
         if match_size:   parts.append("ขนาดตรง")
         if match_weight: parts.append("น้ำหนักอยู่ใน range")
@@ -305,9 +330,9 @@ async def get_recommendation_detail(
         result["cat_match"] = {
             "cat_id":       cat["id"],
             "cat_color":    cat["cat_color"],
-            "cat_size":     cat["size_category"],
-            "cat_weight":   float(cat["weight"]),
-            "cat_chest_cm": float(cat["chest_cm"]),
+            "cat_size":     c_size,
+            "cat_weight":   c_weight,
+            "cat_chest_cm": c_chest,
             "match_score":  match_score,
             "match_size":   match_size,
             "match_weight": match_weight,
@@ -318,5 +343,3 @@ async def get_recommendation_detail(
         result["cat_match"] = None
 
     return {"item": result}
-
-
