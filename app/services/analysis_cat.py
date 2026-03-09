@@ -36,13 +36,69 @@ STRICT OUTPUT REQUIREMENTS:
 - JSON must be complete and properly closed — never truncate.
 - Every field must be present. Use null only where explicitly allowed.
 
-If no cat is detected, return ONLY:
-{"is_cat": false, "message": "ไม่พบแมวในภาพ"}
+════════════════════════════════════════════════════════
+STEP 1 — REALITY CHECK (evaluate BEFORE anything else)
+════════════════════════════════════════════════════════
 
-If a cat is detected, return this exact schema (all fields required):
+First, determine the subject_type from one of these exact values:
+  "real_cat"         → a live, biological cat (the ONLY type that should proceed)
+  "cartoon"          → drawing, illustration, anime, painting, CGI, digital art
+  "stuffed_toy"      → plush toy, stuffed animal, cat doll
+  "figurine_model"   → resin/plastic/ceramic cat figure, scale model
+  "human_in_costume" → person wearing a cat costume, cat ears, cat makeup
+  "cat_mask_prop"    → cat mask, cat face prop held/worn by a human
+  "printed_image"    → photo of a photo, screenshot, image on a screen/billboard
+  "other_animal"     → dog, rabbit, or any non-cat animal
+  "no_cat"           → no cat-like subject at all
+
+Key detection rules for REJECTING fake cats:
+  ✗ Human body proportions (upright torso, human hands/feet, legs)
+  ✗ Fabric texture, stitching seams, button eyes → stuffed toy
+  ✗ Uniform surface, no fur texture, painted features → figurine
+  ✗ Flat/drawn lines, cel-shading, unrealistic colors → cartoon
+  ✗ A person wearing ears/tail/makeup — body is still human
+  ✗ Cat face but human body parts visible
+  ✗ Image appears to be a screenshot or photo of a photo
+
+Key features of a REAL cat:
+  ✓ Actual fur texture with individual hair strands
+  ✓ Natural cat body proportions (4 legs, horizontal spine)
+  ✓ Realistic eyes with slit pupils or round pupils
+  ✓ Natural muscle/fat variation under fur
+  ✓ Paws with visible toe beans or claws
+  ✓ Natural lighting interaction on fur
+
+════════════════════════════════════════════════════════
+STEP 2 — RETURN BASED ON subject_type
+════════════════════════════════════════════════════════
+
+If subject_type is NOT "real_cat", return ONLY this and STOP:
+{
+  "is_cat": false,
+  "subject_type": "<detected type>",
+  "message": "<short Thai message explaining rejection>",
+  "confidence": 0.95
+}
+
+Message templates by type:
+  cartoon          → "ตรวจพบภาพการ์ตูนหรือภาพวาด ไม่ใช่แมวจริง"
+  stuffed_toy      → "ตรวจพบตุ๊กตาหรือของเล่นรูปแมว ไม่ใช่แมวจริง"
+  figurine_model   → "ตรวจพบโมเดลหรือฟิกเกอร์รูปแมว ไม่ใช่แมวจริง"
+  human_in_costume → "ตรวจพบมนุษย์ที่แต่งตัวเป็นแมว ไม่ใช่แมวจริง"
+  cat_mask_prop    → "ตรวจพบหน้ากากแมวหรืออุปกรณ์ประกอบฉาก ไม่ใช่แมวจริง"
+  printed_image    → "ตรวจพบภาพที่ถ่ายจากหน้าจอหรือรูปพิมพ์ กรุณาถ่ายแมวโดยตรง"
+  other_animal     → "ตรวจพบสัตว์ชนิดอื่น ไม่ใช่แมว"
+  no_cat           → "ไม่พบแมวในภาพ"
+
+════════════════════════════════════════════════════════
+STEP 3 — FULL ANALYSIS (only if subject_type == "real_cat")
+════════════════════════════════════════════════════════
+
+Return this exact schema (all fields required):
 {
   "is_cat": true,
-  "cat_color": "describe main color(s) e.g. orange, black and white, grey tabby",
+  "subject_type": "real_cat",
+  "cat_color": "describe main color(s) e.g. orange tabby, black and white, grey tabby",
   "breed": "always provide best guess — NEVER null (e.g. Domestic Shorthair, Persian, Siamese, Scottish Fold, British Shorthair, Bengal, Mixed Breed)",
   "age": 3,
   "gender": 0,
@@ -79,16 +135,13 @@ DERIVATION RULES:
 age (integer, NEVER null — use 0 if truly unknown):
   Estimate from face, body proportions, coat condition.
 
-age_category (derived by backend — do NOT include in response)
-
 gender: 0=unknown/female, 1=male
 
 weight (kg, float): estimate from body volume vs typical domestic cat.
 
 breed (string, NEVER null):
-  Always provide best guess from visual features (face shape, coat, body type).
-  If uncertain, use "Domestic Shorthair" or "Mixed Breed" as fallback.
-  Never return null.
+  Always provide best guess from visual features.
+  If uncertain → "Domestic Shorthair" or "Mixed Breed".
 
 size_recommendation and size_ranges (derive from chest_cm):
   XS: chest < 28    neck_min=16 neck_max=20 back_min=28 back_max=34
@@ -105,6 +158,19 @@ confidence: 0.0-1.0 reflecting image clarity and full body visibility
 """
 
 
+# ── subject_type constants ────────────────────────────────────
+FAKE_CAT_TYPES = {
+    "cartoon",
+    "stuffed_toy",
+    "figurine_model",
+    "human_in_costume",
+    "cat_mask_prop",
+    "printed_image",
+    "other_animal",
+    "no_cat",
+}
+
+
 # ── Pydantic Schema ───────────────────────────────────────────
 class SizeRanges(BaseModel):
     chest_min: float
@@ -117,6 +183,7 @@ class SizeRanges(BaseModel):
 
 class CatAnalysisSchema(BaseModel):
     is_cat: bool
+    subject_type: str = "real_cat"
     cat_color: str
     breed: str = "Domestic Shorthair"
     age: int = 0
@@ -166,7 +233,6 @@ class CatAnalysisSchema(BaseModel):
 
     @classmethod
     def from_ai(cls, data: dict) -> "CatAnalysisSchema":
-       
         return cls(**data)
 
 
@@ -214,10 +280,6 @@ def _log_parse_error(raw_text: str, error, request_id: str = "") -> None:
 # ── Robust JSON Parser ────────────────────────────────────────
 
 def _parse_json_robust(raw_text: str) -> dict:
-    """
-    5-step fallback — รองรับ truncated, markdown fence, trailing garbage
-    ใช้เฉพาะกรณีที่ _call_gemini_with_retry ยัง return มาได้
-    """
     text = raw_text.strip()
 
     # Step 1: parse ตรงๆ
@@ -234,7 +296,7 @@ def _parse_json_robust(raw_text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Step 3: brace-depth counting (แม่นกว่า regex greedy)
+    # Step 3: brace-depth counting
     start = cleaned.find('{')
     if start != -1:
         depth = 0
@@ -267,7 +329,7 @@ def _parse_json_robust(raw_text: str) -> dict:
             except json.JSONDecodeError as e:
                 logger.warning(f"Brace-counted block still invalid: {e}")
 
-    # Step 4: truncated repair (last resort)
+    # Step 4: truncated repair
     fragment = cleaned[start:] if start != -1 else cleaned
     repaired = _repair_truncated_json(fragment)
     if repaired:
@@ -280,7 +342,7 @@ def _parse_json_robust(raw_text: str) -> dict:
 
     # Step 5: is_cat false fallback
     if '"is_cat": false' in text or '"is_cat":false' in text:
-        return {"is_cat": False, "message": "ไม่พบแมวในภาพ"}
+        return {"is_cat": False, "subject_type": "no_cat", "message": "ไม่พบแมวในภาพ"}
 
     raise RuntimeError(
         f"Gemini returned invalid JSON. "
@@ -311,13 +373,6 @@ def _repair_truncated_json(text: str) -> Optional[str]:
 # ── 🔥 Bulletproof Gemini Wrapper ────────────────────────────
 
 def _call_gemini_with_retry(image_bytes: bytes, mime_type: str) -> str:
-    """
-    Production-safe Gemini caller
-    - Retry เฉพาะ transient errors (truncated / empty / rate limit / timeout)
-    - ไม่ retry ถ้า schema พัง หรือ quota หมด
-    - มี request_id สำหรับ trace log
-    - มี latency log
-    """
     request_id = str(uuid.uuid4())[:8]
     max_retries = 3
     base_wait   = 3
@@ -336,13 +391,12 @@ def _call_gemini_with_retry(image_bytes: bytes, mime_type: str) -> str:
                 config=types.GenerateContentConfig(
                     temperature=0.1,
                     max_output_tokens=4000,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),   # ลดให้พอดี = ลดโอกาส truncate
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                     safety_settings=SAFETY_SETTINGS,
                     response_mime_type="application/json",
                 ),
             )
 
-            # ── Extract text ──────────────────────────────────
             raw_text = ""
             if hasattr(response, "text") and response.text:
                 raw_text = response.text.strip()
@@ -351,11 +405,9 @@ def _call_gemini_with_retry(image_bytes: bytes, mime_type: str) -> str:
 
             latency = round(time.time() - start, 2)
 
-            # ── Guard: empty ──────────────────────────────────
             if not raw_text:
                 raise RuntimeError("Empty Gemini response")
 
-            # ── Guard: truncated (JSON ไม่ปิด) ────────────────
             stripped = raw_text.rstrip()
             if not stripped.endswith("}"):
                 print(f"[{request_id}] ⚠️  Truncated response ({len(raw_text)} chars), retrying...")
@@ -369,23 +421,20 @@ def _call_gemini_with_retry(image_bytes: bytes, mime_type: str) -> str:
             latency   = round(time.time() - start, 2)
             print(f"[{request_id}] ❌ Attempt {attempt + 1} failed ({latency}s): {error_str}")
 
-            # ── Quota หมดทั้งวัน → อย่า retry ────────────────
             if "limit: 0" in error_str or "PerDay" in error_str:
                 raise RuntimeError("วันนี้ใช้ quota หมดแล้ว กรุณาลองใหม่พรุ่งนี้")
 
-            # ── Retry เฉพาะ transient ─────────────────────────
             transient = any(kw in error_str.lower() for kw in [
                 "truncated", "empty", "429", "resource_exhausted",
                 "deadline", "timeout", "unavailable",
             ])
 
             if transient and attempt < max_retries - 1:
-                wait = base_wait * (attempt + 1)  # 3s → 6s → 9s
+                wait = base_wait * (attempt + 1)
                 print(f"[{request_id}] ⏳ Retrying in {wait}s...")
                 time.sleep(wait)
                 continue
 
-            # ── Non-transient หรือ retry หมด → raise ──────────
             raise RuntimeError(f"Gemini failed [{request_id}]: {error_str}")
 
     raise RuntimeError(f"Gemini failed completely after {max_retries} retries [{request_id}]")
@@ -406,21 +455,50 @@ def analyze_cat(image_cat: str) -> dict:
     mime_type   = resp.headers.get("Content-Type", "image/jpeg").split(";")[0]
     print(f"✅ Downloaded ({len(image_bytes)/1024:.1f} KB) | mime={mime_type}")
 
-    # 2. Call Gemini (bulletproof wrapper) ─────────────────────
+    # 2. Call Gemini ───────────────────────────────────────────
     raw_text = _call_gemini_with_retry(image_bytes, mime_type)
 
-    # 3. Robust JSON parse ─────────────────────────────────────
+    # 3. Parse JSON ────────────────────────────────────────────
     try:
         ai_data: dict = _parse_json_robust(raw_text)
     except RuntimeError as e:
         _log_parse_error(raw_text, e)
         raise
 
-    # 4. Not a cat ─────────────────────────────────────────────
+    # 4. ── FAKE CAT GATE ──────────────────────────────────────
+    # ถ้า is_cat = false หรือ subject_type ไม่ใช่ real_cat → reject ทันที
     if not ai_data.get("is_cat", True):
+        subject_type = ai_data.get("subject_type", "no_cat")
+        message      = ai_data.get("message", "ไม่พบแมวในภาพ")
+        print(f"🚫 Rejected: subject_type={subject_type} | {message}")
         return {
-            "is_cat": False,
-            "message": ai_data.get("message", "ไม่พบแมวในภาพ"),
+            "is_cat":       False,
+            "subject_type": subject_type,
+            "message":      message,
+            "confidence":   ai_data.get("confidence", 0.95),
+        }
+
+    # Safety net: is_cat=true แต่ subject_type เป็น fake
+    subject_type = ai_data.get("subject_type", "real_cat")
+    if subject_type in FAKE_CAT_TYPES:
+        # กรณี AI ส่ง is_cat=true แต่ subject_type บอกว่าปลอม → reject
+        fake_messages = {
+            "cartoon":          "ตรวจพบภาพการ์ตูนหรือภาพวาด ไม่ใช่แมวจริง",
+            "stuffed_toy":      "ตรวจพบตุ๊กตาหรือของเล่นรูปแมว ไม่ใช่แมวจริง",
+            "figurine_model":   "ตรวจพบโมเดลหรือฟิกเกอร์รูปแมว ไม่ใช่แมวจริง",
+            "human_in_costume": "ตรวจพบมนุษย์ที่แต่งตัวเป็นแมว ไม่ใช่แมวจริง",
+            "cat_mask_prop":    "ตรวจพบหน้ากากแมวหรืออุปกรณ์ประกอบฉาก ไม่ใช่แมวจริง",
+            "printed_image":    "ตรวจพบภาพที่ถ่ายจากหน้าจอหรือรูปพิมพ์ กรุณาถ่ายแมวโดยตรง",
+            "other_animal":     "ตรวจพบสัตว์ชนิดอื่น ไม่ใช่แมว",
+            "no_cat":           "ไม่พบแมวในภาพ",
+        }
+        message = fake_messages.get(subject_type, "ไม่ใช่แมวจริง")
+        print(f"🚫 Safety-net reject: subject_type={subject_type} | {message}")
+        return {
+            "is_cat":       False,
+            "subject_type": subject_type,
+            "message":      message,
+            "confidence":   ai_data.get("confidence", 0.9),
         }
 
     # 5. Pydantic validation ───────────────────────────────────
@@ -430,7 +508,7 @@ def analyze_cat(image_cat: str) -> dict:
         _log_parse_error(raw_text, e)
         raise RuntimeError(f"AI response failed schema validation: {e}")
 
-    # 6. Business logic — deterministic ───────────────────────
+    # 6. Business logic ────────────────────────────────────────
     weight   = _to_float(validated.weight)
     chest_cm = _to_float(validated.chest_cm)
     body_len = _to_float(validated.body_length_cm)
@@ -441,23 +519,21 @@ def analyze_cat(image_cat: str) -> dict:
     bmi           = _calc_bmi(weight, body_len)
     confidence    = validated.confidence if validated.confidence is not None else 0.5
 
-    # 7. Return flat — map ตรงกับ DB columns ──────────────────
+    # 7. Return ────────────────────────────────────────────────
     result = {
-        # Basic
-        "is_cat":    True,
-        "message":   "ok",
-        "cat_color": validated.cat_color,
-        "breed":     validated.breed,
-        "age":       age,
-        "gender":    validated.gender,
+        "is_cat":       True,
+        "subject_type": "real_cat",
+        "message":      "ok",
+        "cat_color":    validated.cat_color,
+        "breed":        validated.breed,
+        "age":          age,
+        "gender":       validated.gender,
 
-        # Weight & Size
         "weight":              weight,
         "size_category":       size_category,
         "size_recommendation": validated.size_recommendation,
         "size_ranges":         validated.size_ranges.model_dump() if validated.size_ranges else None,
 
-        # Measurements (flat — ตรงกับ DB columns)
         "chest_cm":       chest_cm,
         "neck_cm":        _to_float(validated.neck_cm),
         "waist_cm":       _to_float(validated.waist_cm),
@@ -465,7 +541,6 @@ def analyze_cat(image_cat: str) -> dict:
         "back_length_cm": _to_float(validated.back_length_cm),
         "leg_length_cm":  _to_float(validated.leg_length_cm),
 
-        # Body condition
         "age_category":               age_category,
         "body_condition_score":       validated.body_condition_score,
         "body_condition":             validated.body_condition,
@@ -473,7 +548,6 @@ def analyze_cat(image_cat: str) -> dict:
         "bmi":                        bmi,
         "posture":                    validated.posture,
 
-        # Meta
         "confidence":       confidence,
         "quality_flag":     validated.quality_flag,
         "analysis_version": "2.0",

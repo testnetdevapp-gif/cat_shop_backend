@@ -114,6 +114,7 @@ async def get_recommendations(
             SELECT
                 id,
                 uuid,
+                description,
                 clothing_name,
                 category,
                 size_category,
@@ -133,6 +134,7 @@ async def get_recommendations(
                 END                         AS discount_percent,
                 stock,
                 image_url,
+                images,
                 gender,
                 breed,
                 is_featured,
@@ -316,3 +318,5 @@ async def get_recommendation_detail(
         result["cat_match"] = None
 
     return {"item": result}
+
+

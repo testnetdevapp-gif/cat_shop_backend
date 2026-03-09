@@ -14,6 +14,7 @@ from app.core.firebase import init_firebase
 from app.api.api_favourite import router as api_favourite
 from app.api.api_basket import router as api_basket
 from app.api.detect_api import router as detect_router
+from app.api.recommen_api import router as recommen_router
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +69,7 @@ app.include_router(detect_router,   prefix="/api", tags=["Detect"])
 app.include_router(api_favourite,   prefix="/api", tags=["Favourites"])
 app.include_router(api_basket,      prefix="/api", tags=["Baskets"])
 app.include_router(cat_crud_router, prefix="/api", tags=["Cat CRUD"])
+app.include_router(recommen_router, prefix="/api", tags=["Recommend"])
 
 
 @app.get("/health")
