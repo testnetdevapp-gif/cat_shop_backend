@@ -342,4 +342,4 @@ async def get_recommendation_detail(
     else:
         result["cat_match"] = None
 
-    return {"item": result}
+    return {"item": result}  
